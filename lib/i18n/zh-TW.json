@@ -468,5 +468,17 @@
   "{name} Campaign Report": "{name} 活動報表",
   "{type} post": "{type} 貼文",
   "”": "」",
-  "← Campaigns": "← 返回活動列表"
+  "← Campaigns": "← 返回活動列表",
+  "Follow-up sequence": "後續訊息序列",
+  "Each step waits from the moment the link is delivered. The sequence stops as soon as the person writes back, and nothing is sent after 24 hours. When there are steps, they replace the single follow-up above.": "每個步驟從連結送出的那一刻開始計時。對方一回覆，序列就會停止，超過 24 小時後不再傳送。若有設定步驟，會取代上方的單一後續訊息。",
+  "Step {n}: send": "步驟 {n}：傳送",
+  "minutes after the link, to": "分鐘（連結送出後），對象：",
+  "everyone": "所有人",
+  "people who did not open the link": "未開啟連結的人",
+  "people who opened the link": "已開啟連結的人",
+  "Quick question: is it for your own business or to sell to clients?": "快速問一下：是用在你自己的生意，還是要賣給客戶？",
+  "Button label (optional)": "按鈕文字（選填）",
+  "This condition needs a tracked link on the campaign.": "此條件需要活動中有追蹤連結。",
+  "+ Add a step": "+ 新增步驟",
+  "personalizes it. A button with one of the campaign links counts its clicks.": "可個人化。使用活動連結的按鈕會計算點擊。"
 }

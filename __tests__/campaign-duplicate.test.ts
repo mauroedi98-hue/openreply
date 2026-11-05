@@ -200,9 +200,68 @@ describe("duplicateCampaign", () => {
 
     expect(mockPrisma.automation.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        include: { trackedLinks: { orderBy: TRACKED_LINK_ORDER } },
+        include: {
+          trackedLinks: { orderBy: TRACKED_LINK_ORDER },
+          followUpSteps: { orderBy: [{ position: "asc" }] },
+        },
       })
     );
+  });
+
+  it("copies the follow-up sequence in order", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue({
+      ...sourceCampaign,
+      followUpSteps: [
+        {
+          id: "step_a",
+          automationId: "automation_123",
+          position: 3,
+          delayMinutes: 30,
+          message: "First",
+          condition: "NOT_CLICKED",
+          buttonLabel: "Ver el kit",
+          buttonUrl: "https://example.com",
+          createdAt: new Date(),
+        },
+        {
+          id: "step_b",
+          automationId: "automation_123",
+          position: 7,
+          delayMinutes: 240,
+          message: "Second",
+          condition: "ALWAYS",
+          buttonLabel: null,
+          buttonUrl: null,
+          createdAt: new Date(),
+        },
+      ],
+    });
+
+    await duplicateCampaign({
+      automationId: "automation_123",
+      workspaceId: "workspace_123",
+    });
+
+    const data = mockPrisma.automation.create.mock.calls[0][0].data;
+    expect(data.followUpSteps.create).toEqual([
+      {
+        position: 0,
+        delayMinutes: 30,
+        message: "First",
+        condition: "NOT_CLICKED",
+        buttonLabel: "Ver el kit",
+        buttonUrl: "https://example.com",
+      },
+      {
+        position: 1,
+        delayMinutes: 240,
+        message: "Second",
+        condition: "ALWAYS",
+        buttonLabel: null,
+        buttonUrl: null,
+      },
+    ]);
+    expect(data).not.toHaveProperty("followUpSteps.create.0.id");
   });
 
   it("numbers the copy's links 0, 1, 2 even when the original's positions are tied", async () => {

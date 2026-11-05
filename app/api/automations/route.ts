@@ -19,10 +19,54 @@ import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
 } from "@/lib/workspace-access";
+import {
+  MAX_FOLLOW_UP_STEPS,
+  MAX_FOLLOW_UP_STEP_DELAY_MINUTES,
+} from "@/lib/campaigns/follow-up-limits";
 
 // This list is read-your-writes (created/imported campaigns must show up
 // immediately), so never cache it at the route or CDN layer.
 export const dynamic = "force-dynamic";
+
+// One message of a multi-step follow-up sequence. Delays are counted from the
+// moment the link is delivered and capped below Instagram's 24-hour window.
+const followUpStepSchema = z
+  .object({
+    delayMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_FOLLOW_UP_STEP_DELAY_MINUTES),
+    message: z.string().trim().min(1).max(1000),
+    condition: z
+      .enum(["ALWAYS", "NOT_CLICKED", "CLICKED"])
+      .optional()
+      .default("ALWAYS"),
+    buttonLabel: z.string().trim().max(20).optional().nullable(),
+    buttonUrl: z
+      .union([z.string().url(), z.literal("")])
+      .optional()
+      .nullable(),
+  })
+  .refine((s) => !s.buttonUrl || Boolean(s.buttonLabel?.trim()), {
+    message: "A button link needs a button label",
+    path: ["buttonLabel"],
+  });
+
+const followUpStepsSchema = z
+  .array(followUpStepSchema)
+  .max(MAX_FOLLOW_UP_STEPS);
+
+function followUpStepRows(steps: z.infer<typeof followUpStepsSchema>) {
+  return steps.map((step, index) => ({
+    position: index,
+    delayMinutes: step.delayMinutes,
+    message: step.message,
+    condition: step.condition,
+    buttonLabel: step.buttonUrl ? step.buttonLabel?.trim() || null : null,
+    buttonUrl: step.buttonUrl || null,
+  }));
+}
 
 const createAutomationSchema = z
   .object({
@@ -49,6 +93,9 @@ const createAutomationSchema = z
     // Minutes to wait before the follow-up. Capped at 24h so it stays inside
     // Instagram's messaging window.
     followUpDelayMinutes: z.number().int().min(0).max(1440).optional().default(0),
+    // Multi-step follow-up sequence. When present it replaces the single
+    // follow-up above at send time.
+    followUpSteps: followUpStepsSchema.optional().default([]),
     publicReplyEnabled: z.boolean().optional().default(false),
     publicReplyMessage: z.string().max(1000).optional().nullable(),
     publicReplyMessages: z
@@ -111,6 +158,8 @@ const updateAutomationSchema = z.object({
   followUpEnabled: z.boolean().optional(),
   followUpMessage: z.string().max(1000).optional().nullable(),
   followUpDelayMinutes: z.number().int().min(0).max(1440).optional(),
+  // Replaces the whole sequence when present; [] removes it.
+  followUpSteps: followUpStepsSchema.optional(),
   publicReplyEnabled: z.boolean().optional(),
   publicReplyMessage: z.string().max(1000).optional().nullable(),
   publicReplyMessages: z.array(z.string().max(1000)).max(10).optional(),
@@ -164,6 +213,9 @@ export async function GET(request: NextRequest) {
           _count: { select: { clicks: true } },
         },
         orderBy: TRACKED_LINK_ORDER,
+      },
+      followUpSteps: {
+        orderBy: [{ position: "asc" }],
       },
     },
     orderBy: { createdAt: "desc" },
@@ -422,9 +474,17 @@ export async function POST(request: NextRequest) {
       ...(linkCreates.length > 0
         ? { trackedLinks: { create: linkCreates } }
         : {}),
+      ...(parsed.data.followUpSteps.length > 0
+        ? {
+            followUpSteps: {
+              create: followUpStepRows(parsed.data.followUpSteps),
+            },
+          }
+        : {}),
     },
     include: {
       trackedLinks: true,
+      followUpSteps: { orderBy: [{ position: "asc" }] },
     },
   });
 
@@ -489,6 +549,7 @@ export async function PATCH(request: NextRequest) {
     trackedDestinationUrl,
     secondaryDestinationUrl,
     secondaryButtonLabel,
+    followUpSteps,
     ...automationData
   } = parsed.data;
 
@@ -558,6 +619,21 @@ export async function PATCH(request: NextRequest) {
       secondaryUrl: secondaryDestinationUrl,
       secondaryLabel: secondaryButtonLabel,
     });
+
+    // The sequence is saved as a whole: the given list replaces the old one.
+    // Steps already scheduled for people keep their ids, so a removed step
+    // simply finds nothing when it fires and is not sent.
+    if (followUpSteps !== undefined) {
+      await tx.followUpStep.deleteMany({ where: { automationId } });
+      if (followUpSteps.length > 0) {
+        await tx.followUpStep.createMany({
+          data: followUpStepRows(followUpSteps).map((row) => ({
+            ...row,
+            automationId,
+          })),
+        });
+      }
+    }
 
     return campaign;
   });

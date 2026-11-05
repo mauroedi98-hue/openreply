@@ -468,5 +468,17 @@
   "{name} Campaign Report": "Отчёт по кампании «{name}»",
   "{type} post": "Пост {type}",
   "”": "»",
-  "← Campaigns": "← Кампании"
+  "← Campaigns": "← Кампании",
+  "Follow-up sequence": "Цепочка напоминаний",
+  "Each step waits from the moment the link is delivered. The sequence stops as soon as the person writes back, and nothing is sent after 24 hours. When there are steps, they replace the single follow-up above.": "Каждый шаг отсчитывается с момента отправки ссылки. Цепочка останавливается, как только человек ответит, и после 24 часов ничего не отправляется. Если шаги есть, они заменяют одиночное сообщение выше.",
+  "Step {n}: send": "Шаг {n}: отправить",
+  "minutes after the link, to": "минут после ссылки, кому:",
+  "everyone": "всем",
+  "people who did not open the link": "тем, кто не открыл ссылку",
+  "people who opened the link": "тем, кто открыл ссылку",
+  "Quick question: is it for your own business or to sell to clients?": "Быстрый вопрос: это для вашего бизнеса или чтобы продавать клиентам?",
+  "Button label (optional)": "Текст кнопки (необязательно)",
+  "This condition needs a tracked link on the campaign.": "Для этого условия нужна отслеживаемая ссылка в кампании.",
+  "+ Add a step": "+ Добавить шаг",
+  "personalizes it. A button with one of the campaign links counts its clicks.": "персонализирует. Кнопка со ссылкой кампании учитывает клики."
 }

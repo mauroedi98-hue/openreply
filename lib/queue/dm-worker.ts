@@ -13,12 +13,20 @@ import {
   MESSAGE_JOB_NAME,
   POSTBACK_JOB_NAME,
   FOLLOWUP_JOB_NAME,
+  FOLLOWUP_STEP_JOB_NAME,
   type DmQueueJob,
   type ProcessCommentJob,
   type ProcessMessageJob,
   type ProcessPostbackJob,
   type ProcessFollowUpJob,
+  type ProcessFollowUpStepJob,
 } from "./client";
+import {
+  followUpStepSkipReason,
+  recordInboundMessage,
+  resolveFollowUpButton,
+  scheduleFollowUpSequence,
+} from "./follow-up-sequence";
 import { prisma } from "@/lib/db/client";
 import {
   MetaApiError,
@@ -1125,28 +1133,9 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
       );
       return;
     }
-    // Optional appreciation follow-up: once the link has been delivered, send a
-    // short thank-you. It is scheduled as its own delayed job so it can go out
-    // some minutes later (followUpDelayMinutes) rather than immediately. The
-    // deterministic job id dedupes repeat button taps to one follow-up per user.
-    if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
-      const delayMs =
-        Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000;
-      await getDMQueue().add(
-        FOLLOWUP_JOB_NAME,
-        {
-          instagramAccountId: automation.instagramAccount.instagramId,
-          accountConnectionId: automation.instagramAccountId,
-          userId,
-          automationId: automation.id,
-          commenterName,
-        },
-        {
-          delay: delayMs,
-          jobId: `followup_${automation.id}_${userId}`,
-        },
-      );
-    }
+    // Follow-ups once the link has been delivered: the multi-step sequence if
+    // the campaign has one, otherwise the optional single follow-up.
+    await scheduleFollowUpsAfterDelivery({ automation, userId, commenterName });
     await prisma.dmLog.upsert({
       where: {
         automationId_commentId: {
@@ -1270,6 +1259,211 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
 }
 
 /**
+ * Schedule what follows a delivered link: the campaign's multi-step sequence
+ * when it has steps, otherwise the optional single follow-up. Scheduling is
+ * best-effort — the link already went out, so a queue hiccup here must not
+ * mark the delivery as failed (and retry it).
+ */
+async function scheduleFollowUpsAfterDelivery({
+  automation,
+  userId,
+  commenterName,
+}: {
+  automation: {
+    id: string;
+    instagramAccountId: string;
+    followUpEnabled: boolean;
+    followUpMessage: string | null;
+    followUpDelayMinutes: number | null;
+    instagramAccount: { instagramId: string };
+  };
+  userId: string;
+  commenterName: string | null;
+}): Promise<void> {
+  let scheduledSteps = 0;
+  try {
+    scheduledSteps = await scheduleFollowUpSequence({
+      automationId: automation.id,
+      instagramBusinessId: automation.instagramAccount.instagramId,
+      accountConnectionId: automation.instagramAccountId,
+      userId,
+      commenterName,
+    });
+  } catch (error) {
+    // e.g. the worker was deployed before the sequence tables exist: the
+    // single follow-up below still goes out as it always did.
+    console.log(
+      "[DM Worker] Failed to schedule follow-up sequence:",
+      formatError(error)
+    );
+  }
+  if (scheduledSteps > 0) return;
+
+  try {
+    // The deterministic job id dedupes repeat button taps to one follow-up per user.
+    if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
+      await getDMQueue().add(
+        FOLLOWUP_JOB_NAME,
+        {
+          instagramAccountId: automation.instagramAccount.instagramId,
+          accountConnectionId: automation.instagramAccountId,
+          userId,
+          automationId: automation.id,
+          commenterName,
+        },
+        {
+          delay: Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000,
+          jobId: `followup_${automation.id}_${userId}`,
+        }
+      );
+    }
+  } catch (error) {
+    console.log(
+      "[DM Worker] Failed to schedule follow-ups:",
+      formatError(error)
+    );
+  }
+}
+
+/**
+ * Send one step of a follow-up sequence when its delay elapses. It is checked
+ * again at send time: skipped if the person wrote back since the link was
+ * delivered, if the 24-hour window closed, or if its click condition does not
+ * match. Best-effort like the single follow-up: a failed send is logged, not
+ * retried against a window that may have closed.
+ */
+async function processFollowUpStep(
+  job: Job<ProcessFollowUpStepJob>
+): Promise<void> {
+  const {
+    instagramAccountId,
+    userId,
+    automationId,
+    stepId,
+    startedAt,
+    commenterName,
+  } = job.data;
+
+  const step = await prisma.followUpStep.findFirst({
+    where: { id: stepId, automationId },
+    include: {
+      automation: {
+        include: {
+          instagramAccount: true,
+          trackedLinks: {
+            select: { slug: true, label: true, destinationUrl: true },
+            orderBy: TRACKED_LINK_ORDER,
+          },
+        },
+      },
+    },
+  });
+  if (!step) return;
+  const automation = step.automation;
+  if (
+    !automation.isActive ||
+    (job.data.accountConnectionId &&
+      automation.instagramAccountId !== job.data.accountConnectionId) ||
+    automation.instagramAccount.instagramId !== instagramAccountId ||
+    !hasInstagramCredentials(automation.instagramAccount)
+  ) {
+    return;
+  }
+
+  const recipientToken = hashRecipientId(userId);
+  const [activity, click] = await Promise.all([
+    prisma.conversationActivity.findUnique({
+      where: {
+        instagramBusinessId_userId: {
+          instagramBusinessId: instagramAccountId,
+          userId,
+        },
+      },
+      select: { lastInboundAt: true },
+    }),
+    step.condition === "ALWAYS"
+      ? Promise.resolve(null)
+      : prisma.linkClick.findFirst({
+          where: {
+            automationId,
+            recipientHash: recipientToken,
+            createdAt: { gte: new Date(startedAt) },
+          },
+          select: { id: true },
+        }),
+  ]);
+
+  const skipReason = followUpStepSkipReason({
+    condition: step.condition,
+    startedAt,
+    now: Date.now(),
+    lastInboundAt: activity?.lastInboundAt.getTime() ?? null,
+    clicked: Boolean(click),
+  });
+  if (skipReason) {
+    console.log(
+      `[DM Worker] Follow-up step ${step.id} skipped (${skipReason})`
+    );
+    return;
+  }
+
+  let accessToken: InstagramContext;
+  try {
+    accessToken = await createInstagramContext(
+      automation.instagramAccount,
+      `${job.id}:${automation.id}`
+    );
+  } catch {
+    return;
+  }
+
+  const text = renderMessageWithoutLink({
+    message: step.message,
+    commenterName: commenterName ?? null,
+  });
+  const button = resolveFollowUpButton({
+    buttonLabel: step.buttonLabel,
+    buttonUrl: step.buttonUrl,
+    trackedLinks: automation.trackedLinks,
+    recipientToken,
+  });
+
+  try {
+    if (!button) {
+      await sendDirectMessage({
+        context: accessToken,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId,
+        message: text,
+      });
+      return;
+    }
+    try {
+      await sendDirectMessageWithLinkButton({
+        context: accessToken,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId,
+        text: text || button.title,
+        buttons: [button],
+      });
+    } catch (buttonError) {
+      if (!isTemplateRejection(buttonError)) throw buttonError;
+      await sendDirectMessage({
+        context: accessToken,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId,
+        message: `${text}\n${button.url}`.trim(),
+      });
+    }
+  } catch (error) {
+    console.log(
+      "[DM Worker] Failed to send follow-up step:",
+      formatError(error)
+    );
+  }
+}
+
+/**
  * Reply to an inbound DM whose text matches a campaign's keywords.
  *
  * The user has messaged us, so the conversation is already open: this path
@@ -1279,6 +1473,18 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
  */
 async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const { instagramAccountId, messageId, messageText, senderId } = job.data;
+
+  // Any message from this person stops their pending follow-up sequences.
+  // Best-effort: keyword replies below must not depend on it.
+  await recordInboundMessage({
+    instagramBusinessId: instagramAccountId,
+    userId: senderId,
+  }).catch((error) => {
+    console.log(
+      "[DM Worker] Failed to record inbound message:",
+      formatError(error)
+    );
+  });
 
   const automations = await prisma.automation.findMany({
     where: {
@@ -1462,25 +1668,14 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           context: "message trigger",
         });
 
-        // The link has been delivered, so the appreciation follow-up applies
-        // here exactly as it does after a button tap. Not scheduled behind the
-        // follow prompt — no link went out yet in that branch.
-        if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
-          await getDMQueue().add(
-            FOLLOWUP_JOB_NAME,
-            {
-              instagramAccountId: automation.instagramAccount.instagramId,
-              accountConnectionId: automation.instagramAccountId,
-              userId: senderId,
-              automationId: automation.id,
-              commenterName,
-            },
-            {
-              delay: Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000,
-              jobId: `followup_${automation.id}_${senderId}`,
-            }
-          );
-        }
+        // The link has been delivered, so the follow-ups apply here exactly as
+        // they do after a button tap. Not scheduled behind the follow prompt —
+        // no link went out yet in that branch.
+        await scheduleFollowUpsAfterDelivery({
+          automation,
+          userId: senderId,
+          commenterName,
+        });
       }
 
       await prisma.dmLog.upsert({
@@ -1540,6 +1735,9 @@ async function dispatchJob(job: Job<DmQueueJob>): Promise<void> {
   }
   if (job.name === FOLLOWUP_JOB_NAME) {
     return processFollowUp(job as Job<ProcessFollowUpJob>);
+  }
+  if (job.name === FOLLOWUP_STEP_JOB_NAME) {
+    return processFollowUpStep(job as Job<ProcessFollowUpStepJob>);
   }
   if (job.name === MESSAGE_JOB_NAME) {
     return processMessage(job as Job<ProcessMessageJob>);

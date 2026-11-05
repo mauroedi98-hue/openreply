@@ -67,6 +67,20 @@ export interface ProcessFollowUpJob {
   commenterName?: string | null;
 }
 
+// One step of a multi-step follow-up sequence (FollowUpStep), scheduled when
+// the link is delivered. `startedAt` is that delivery time in epoch ms: the
+// step's delay, the 24-hour window and "did they reply / click since" are all
+// measured from it.
+export interface ProcessFollowUpStepJob {
+  accountConnectionId?: string;
+  instagramAccountId: string;
+  userId: string;
+  automationId: string;
+  stepId: string;
+  startedAt: number;
+  commenterName?: string | null;
+}
+
 // An inbound DM from a user. Campaigns with `dmTriggerEnabled` whose keywords
 // match the text reply to the sender.
 export interface ProcessMessageJob {
@@ -81,10 +95,12 @@ export type DmQueueJob =
   | ProcessCommentJob
   | ProcessPostbackJob
   | ProcessFollowUpJob
+  | ProcessFollowUpStepJob
   | ProcessMessageJob;
 
 export const POSTBACK_JOB_NAME = "process-postback";
 export const FOLLOWUP_JOB_NAME = "process-followup";
+export const FOLLOWUP_STEP_JOB_NAME = "process-followup-step";
 export const MESSAGE_JOB_NAME = "process-message";
 
 let dmQueue: Queue<DmQueueJob> | null = null;

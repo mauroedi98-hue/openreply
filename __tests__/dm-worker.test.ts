@@ -38,6 +38,19 @@ const {
     operationalEvent: {
       create: vi.fn(),
     },
+    // Follow-up sequences: none by default, so the legacy single follow-up
+    // behaves exactly as before.
+    followUpStep: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn(),
+    },
+    conversationActivity: {
+      upsert: vi.fn().mockResolvedValue({}),
+      findUnique: vi.fn(),
+    },
+    linkClick: {
+      findFirst: vi.fn(),
+    },
   },
   mockSendPrivateReply: vi.fn(),
   mockSendPrivateReplyWithLinkButton: vi.fn(),
@@ -118,6 +131,7 @@ vi.mock("@/lib/queue/client", () => ({
   getRedisConnection: vi.fn(),
   POSTBACK_JOB_NAME: "process-postback",
   FOLLOWUP_JOB_NAME: "process-followup",
+  FOLLOWUP_STEP_JOB_NAME: "process-followup-step",
   MESSAGE_JOB_NAME: "process-message",
 }));
 
@@ -244,6 +258,11 @@ beforeEach(() => {
     workspaceId: "workspace_123",
   });
   mockPrisma.operationalEvent.create.mockResolvedValue({});
+  mockPrisma.followUpStep.findMany.mockResolvedValue([]);
+  mockPrisma.followUpStep.findFirst.mockResolvedValue(null);
+  mockPrisma.conversationActivity.upsert.mockResolvedValue({});
+  mockPrisma.conversationActivity.findUnique.mockResolvedValue(null);
+  mockPrisma.linkClick.findFirst.mockResolvedValue(null);
   mockDecryptToken.mockReturnValue("decrypted_token");
   mockMatchKeywords.mockReturnValue({ matched: true, matchedKeyword: "LINK" });
   mockReserveWorkspaceDMSend.mockResolvedValue({
@@ -1763,4 +1782,238 @@ it("retains the public reply claim if sending succeeded but its log write failed
   await process({ ...createMockJob(), id: "next-poll" });
   expect(sendCommentReply).toHaveBeenCalledTimes(1);
   expect(mockSendPrivateReply).toHaveBeenCalledTimes(1);
+});
+
+describe("DM Worker — follow-up sequence", () => {
+  const KIT_URL = "https://kit.cerebrosia.com";
+  const sequenceAutomation = {
+    ...mockAutomation,
+    dmTriggerEnabled: true,
+    requireFollow: false,
+    followPromptMessage: null,
+    followPromptButtonLabel: null,
+    // A legacy single follow-up is configured too: steps must replace it.
+    followUpEnabled: true,
+    followUpMessage: "legacy thanks",
+    followUpDelayMinutes: 30,
+    trackedLinks: [
+      { slug: "slug_kit", label: "Ver el kit", destinationUrl: KIT_URL },
+    ],
+  };
+
+  function buildStep(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "step_1",
+      automationId: "auto_789",
+      position: 0,
+      delayMinutes: 30,
+      message: "¿Te abrió el enlace, {username}?",
+      condition: "ALWAYS",
+      buttonLabel: null,
+      buttonUrl: null,
+      createdAt: new Date(),
+      automation: sequenceAutomation,
+      ...overrides,
+    };
+  }
+
+  function createStepJob(data: Record<string, unknown> = {}) {
+    return {
+      name: "process-followup-step",
+      data: {
+        instagramAccountId: "ig_456",
+        accountConnectionId: "ig_account_row_1",
+        userId: "commenter_999",
+        automationId: "auto_789",
+        stepId: "step_1",
+        startedAt: Date.now() - 30 * 60_000,
+        commenterName: "commenter_user",
+        ...data,
+      },
+      id: "step_job_001",
+      attemptsMade: 0,
+    };
+  }
+
+  function createMessageJob(messageText = "quiero el MOTOR") {
+    return {
+      name: "process-message",
+      data: {
+        instagramAccountId: "ig_456",
+        messageId: "mid_seq",
+        messageText,
+        senderId: "commenter_999",
+      },
+      id: "message_job_seq",
+      attemptsMade: 0,
+    };
+  }
+
+  beforeEach(() => {
+    mockPrisma.automation.findMany.mockResolvedValue([sequenceAutomation]);
+  });
+
+  it("schedules every step instead of the single follow-up once the link is delivered", async () => {
+    mockPrisma.followUpStep.findMany.mockResolvedValue([
+      { id: "step_1", delayMinutes: 30 },
+      { id: "step_2", delayMinutes: 240 },
+    ]);
+
+    await getProcessor()(createMessageJob());
+
+    const stepCalls = mockQueueAdd.mock.calls.filter(
+      ([name]) => name === "process-followup-step"
+    );
+    expect(stepCalls).toHaveLength(2);
+    expect(stepCalls[0][1]).toEqual(
+      expect.objectContaining({
+        stepId: "step_1",
+        userId: "commenter_999",
+        automationId: "auto_789",
+        instagramAccountId: "ig_456",
+      })
+    );
+    expect(stepCalls[0][2]).toEqual(
+      expect.objectContaining({ delay: 30 * 60_000 })
+    );
+    expect(stepCalls[1][2]).toEqual(
+      expect.objectContaining({ delay: 240 * 60_000 })
+    );
+    expect(
+      mockQueueAdd.mock.calls.some(([name]) => name === "process-followup")
+    ).toBe(false);
+  });
+
+  it("keeps the single follow-up when the campaign has no steps", async () => {
+    await getProcessor()(createMessageJob());
+
+    expect(
+      mockQueueAdd.mock.calls.some(([name]) => name === "process-followup")
+    ).toBe(true);
+  });
+
+  it("records every inbound DM so a sequence stops when the person replies", async () => {
+    mockMatchKeywords.mockReturnValue({ matched: false, matchedKeyword: null });
+
+    await getProcessor()(createMessageJob("gracias, lo reviso"));
+
+    expect(mockPrisma.conversationActivity.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          instagramBusinessId_userId: {
+            instagramBusinessId: "ig_456",
+            userId: "commenter_999",
+          },
+        },
+      })
+    );
+  });
+
+  it("sends a step with its button as the campaign's tracked link", async () => {
+    mockPrisma.followUpStep.findFirst.mockResolvedValue(
+      buildStep({ buttonLabel: "Ver el kit", buttonUrl: `${KIT_URL}/` })
+    );
+
+    await getProcessor()(createStepJob());
+
+    expect(mockSendDirectMessageWithLinkButton).toHaveBeenCalledWith(
+      "decrypted_token",
+      "ig_456",
+      "commenter_999",
+      "¿Te abrió el enlace, commenter_user?",
+      [
+        {
+          title: "Ver el kit",
+          url: expect.stringContaining(
+            `/r/slug_kit?r=${hashRecipientId("commenter_999")}`
+          ),
+        },
+      ]
+    );
+  });
+
+  it("sends a step without a button as plain text", async () => {
+    mockPrisma.followUpStep.findFirst.mockResolvedValue(buildStep());
+
+    await getProcessor()(createStepJob());
+
+    expect(mockSendDirectMessage).toHaveBeenCalledWith(
+      "decrypted_token",
+      "ig_456",
+      "commenter_999",
+      "¿Te abrió el enlace, commenter_user?"
+    );
+  });
+
+  it("does not send a step once the person has written back", async () => {
+    mockPrisma.followUpStep.findFirst.mockResolvedValue(buildStep());
+    mockPrisma.conversationActivity.findUnique.mockResolvedValue({
+      lastInboundAt: new Date(),
+    });
+
+    await getProcessor()(createStepJob());
+
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+  });
+
+  it("still sends when the only message from them came before the link", async () => {
+    mockPrisma.followUpStep.findFirst.mockResolvedValue(buildStep());
+    mockPrisma.conversationActivity.findUnique.mockResolvedValue({
+      lastInboundAt: new Date(Date.now() - 60 * 60_000),
+    });
+
+    await getProcessor()(createStepJob());
+
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a 'did not open the link' step for someone who opened it", async () => {
+    mockPrisma.followUpStep.findFirst.mockResolvedValue(
+      buildStep({ condition: "NOT_CLICKED" })
+    );
+    mockPrisma.linkClick.findFirst.mockResolvedValue({ id: "click_1" });
+
+    await getProcessor()(createStepJob());
+
+    expect(mockPrisma.linkClick.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          automationId: "auto_789",
+          recipientHash: hashRecipientId("commenter_999"),
+        }),
+      })
+    );
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips an 'opened the link' step for someone who did not open it", async () => {
+    mockPrisma.followUpStep.findFirst.mockResolvedValue(
+      buildStep({ condition: "CLICKED" })
+    );
+
+    await getProcessor()(createStepJob());
+
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("never sends after Instagram's 24-hour window", async () => {
+    mockPrisma.followUpStep.findFirst.mockResolvedValue(buildStep());
+
+    await getProcessor()(
+      createStepJob({ startedAt: Date.now() - 25 * 60 * 60_000 })
+    );
+
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the step was removed or the campaign paused", async () => {
+    await getProcessor()(createStepJob());
+    mockPrisma.followUpStep.findFirst.mockResolvedValue(
+      buildStep({ automation: { ...sequenceAutomation, isActive: false } })
+    );
+    await getProcessor()(createStepJob());
+
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
 });

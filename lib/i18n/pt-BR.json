@@ -468,5 +468,17 @@
   "{name} Campaign Report": "Relatório da campanha {name}",
   "{type} post": "Publicação {type}",
   "”": "”",
-  "← Campaigns": "← Campanhas"
+  "← Campaigns": "← Campanhas",
+  "Follow-up sequence": "Sequência de acompanhamento",
+  "Each step waits from the moment the link is delivered. The sequence stops as soon as the person writes back, and nothing is sent after 24 hours. When there are steps, they replace the single follow-up above.": "Cada etapa espera a partir do momento em que o link é entregue. A sequência para assim que a pessoa responde, e nada é enviado depois de 24 horas. Quando há etapas, elas substituem o acompanhamento único acima.",
+  "Step {n}: send": "Etapa {n}: enviar",
+  "minutes after the link, to": "minutos depois do link, para",
+  "everyone": "todos",
+  "people who did not open the link": "quem não abriu o link",
+  "people who opened the link": "quem abriu o link",
+  "Quick question: is it for your own business or to sell to clients?": "Pergunta rápida: é para o seu negócio ou para vender a clientes?",
+  "Button label (optional)": "Texto do botão (opcional)",
+  "This condition needs a tracked link on the campaign.": "Esta condição precisa de um link rastreado na campanha.",
+  "+ Add a step": "+ Adicionar etapa",
+  "personalizes it. A button with one of the campaign links counts its clicks.": "personaliza. Um botão com um dos links da campanha conta os cliques."
 }

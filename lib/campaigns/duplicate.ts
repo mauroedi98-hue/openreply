@@ -43,14 +43,17 @@ export async function duplicateCampaign({
 }) {
   const source = await prisma.automation.findFirst({
     where: { id: automationId, workspaceId },
-    include: { trackedLinks: { orderBy: TRACKED_LINK_ORDER } },
+    include: {
+      trackedLinks: { orderBy: TRACKED_LINK_ORDER },
+      followUpSteps: { orderBy: [{ position: "asc" }] },
+    },
   });
 
   if (!source) return null;
 
-  // Every setting on the row carries over. The links are recreated rather than
-  // spread, since they are rows of their own.
-  const { trackedLinks, ...settings } = source;
+  // Every setting on the row carries over. The links and follow-up steps are
+  // recreated rather than spread, since they are rows of their own.
+  const { trackedLinks, followUpSteps = [], ...settings } = source;
 
   return prisma.automation.create({
     data: {
@@ -76,6 +79,20 @@ export async function duplicateCampaign({
           position,
         })),
       },
+      ...(followUpSteps.length > 0
+        ? {
+            followUpSteps: {
+              create: followUpSteps.map((step, position) => ({
+                position,
+                delayMinutes: step.delayMinutes,
+                message: step.message,
+                condition: step.condition,
+                buttonLabel: step.buttonLabel,
+                buttonUrl: step.buttonUrl,
+              })),
+            },
+          }
+        : {}),
     },
     include: { trackedLinks: true },
   });

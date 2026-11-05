@@ -50,6 +50,7 @@ interface LoadedCampaign {
   followUpEnabled: boolean;
   followUpMessage: string | null;
   followUpDelayMinutes: number | null;
+  followUpSteps?: FollowUpStepDraft[];
   publicReplyEnabled: boolean;
   publicReplyMessage: string | null;
   publicReplyMessages: string[];
@@ -57,6 +58,19 @@ interface LoadedCampaign {
   instagramAccountId: string;
   trackedLinks?: { destinationUrl: string; label?: string | null }[];
 }
+
+type FollowUpConditionDraft = "ALWAYS" | "NOT_CLICKED" | "CLICKED";
+
+interface FollowUpStepDraft {
+  delayMinutes: number;
+  message: string;
+  condition: FollowUpConditionDraft;
+  buttonLabel: string | null;
+  buttonUrl: string | null;
+}
+
+const MAX_SEQUENCE_STEPS = 10;
+const MAX_SEQUENCE_DELAY_MINUTES = 23 * 60 + 30;
 
 interface CampaignBuilderProps {
   mode: "new" | "edit";
@@ -184,6 +198,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [followUpEnabled, setFollowUpEnabled] = useState(false);
   const [followUpMessage, setFollowUpMessage] = useState("");
   const [followUpDelayMinutes, setFollowUpDelayMinutes] = useState(0);
+  const [followUpSteps, setFollowUpSteps] = useState<FollowUpStepDraft[]>([]);
 
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
 
@@ -293,6 +308,15 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setFollowUpEnabled(c.followUpEnabled ?? false);
         setFollowUpMessage(c.followUpMessage ?? "");
         setFollowUpDelayMinutes(c.followUpDelayMinutes ?? 0);
+        setFollowUpSteps(
+          (c.followUpSteps ?? []).map((s) => ({
+            delayMinutes: s.delayMinutes,
+            message: s.message,
+            condition: s.condition ?? "ALWAYS",
+            buttonLabel: s.buttonLabel ?? null,
+            buttonUrl: s.buttonUrl ?? null,
+          }))
+        );
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
@@ -433,6 +457,15 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       followUpEnabled,
       followUpMessage: followUpEnabled ? followUpMessage.trim() : "",
       followUpDelayMinutes: followUpEnabled ? followUpDelayMinutes : 0,
+      followUpSteps: followUpSteps
+        .filter((s) => s.message.trim())
+        .map((s) => ({
+          delayMinutes: s.delayMinutes,
+          message: s.message.trim(),
+          condition: s.condition,
+          buttonLabel: s.buttonUrl?.trim() ? s.buttonLabel?.trim() || null : null,
+          buttonUrl: s.buttonUrl?.trim() || "",
+        })),
       isActive: activeValue,
     };
 
@@ -991,6 +1024,13 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               </div>
             )}
           </div>
+          <FollowUpSequenceEditor
+            steps={followUpSteps}
+            onChange={setFollowUpSteps}
+            campaignLinks={[trackedDestinationUrl, secondaryDestinationUrl]
+              .map((u) => u.trim())
+              .filter(Boolean)}
+          />
         </Section>
       </div>
 
@@ -1030,6 +1070,164 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         </div>
       </div>
       </div>
+    </div>
+  );
+}
+
+const SEQUENCE_INPUT =
+  "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none";
+
+/**
+ * Multi-step follow-up sequence (ManyChat-style). Every step waits from the
+ * moment the link is delivered, can target people who did / did not open the
+ * campaign link, and stops as soon as the person writes back. When the
+ * campaign has steps they replace the single follow-up above.
+ */
+function FollowUpSequenceEditor({
+  steps,
+  onChange,
+  campaignLinks,
+}: {
+  steps: FollowUpStepDraft[];
+  onChange: (steps: FollowUpStepDraft[]) => void;
+  campaignLinks: string[];
+}) {
+  const { t } = useI18n();
+  const update = (index: number, patch: Partial<FollowUpStepDraft>) =>
+    onChange(steps.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+  const remove = (index: number) =>
+    onChange(steps.filter((_, i) => i !== index));
+  const add = () =>
+    onChange([
+      ...steps,
+      {
+        delayMinutes: steps.length === 0 ? 30 : 240,
+        message: "",
+        condition: "ALWAYS",
+        buttonLabel: null,
+        buttonUrl: null,
+      },
+    ]);
+
+  return (
+    <div className="mt-3 rounded-lg border border-border p-3">
+      <span className="text-sm text-foreground">
+        {t("Follow-up sequence")}
+      </span>
+      <p className="mt-1 text-xs text-muted">
+        {t(
+          "Each step waits from the moment the link is delivered. The sequence stops as soon as the person writes back, and nothing is sent after 24 hours. When there are steps, they replace the single follow-up above."
+        )}
+      </p>
+      <div className="mt-3 space-y-3">
+        {steps.map((step, index) => (
+          <div
+            key={index}
+            className="space-y-2 rounded-lg border border-border p-3"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-sm text-foreground">
+              <span className="text-xs text-muted">
+                {t("Step {n}: send", { n: index + 1 })}
+              </span>
+              <input
+                type="number"
+                min={0}
+                max={MAX_SEQUENCE_DELAY_MINUTES}
+                value={step.delayMinutes}
+                onChange={(e) =>
+                  update(index, {
+                    delayMinutes: Math.max(
+                      0,
+                      Math.min(
+                        MAX_SEQUENCE_DELAY_MINUTES,
+                        Math.floor(Number(e.target.value) || 0)
+                      )
+                    ),
+                  })
+                }
+                className="w-20 rounded-lg border border-border bg-surface px-2 py-1 text-sm text-foreground focus:border-accent/40 focus:outline-none"
+              />
+              <span className="text-xs text-muted">
+                {t("minutes after the link, to")}
+              </span>
+              <select
+                value={step.condition}
+                onChange={(e) =>
+                  update(index, {
+                    condition: e.target.value as FollowUpConditionDraft,
+                  })
+                }
+                className="rounded-lg border border-border bg-surface px-2 py-1 text-sm text-foreground focus:border-accent/40 focus:outline-none"
+              >
+                <option value="ALWAYS">{t("everyone")}</option>
+                <option value="NOT_CLICKED">
+                  {t("people who did not open the link")}
+                </option>
+                <option value="CLICKED">
+                  {t("people who opened the link")}
+                </option>
+              </select>
+              <button
+                type="button"
+                onClick={() => remove(index)}
+                className="ml-auto text-xs text-muted hover:text-foreground"
+              >
+                {t("Remove")}
+              </button>
+            </div>
+            <textarea
+              value={step.message}
+              onChange={(e) => update(index, { message: e.target.value })}
+              placeholder={t("Quick question: is it for your own business or to sell to clients?")}
+              rows={3}
+              maxLength={1000}
+              className={`${SEQUENCE_INPUT} resize-none`}
+            />
+            <div className="flex flex-wrap gap-2">
+              <input
+                value={step.buttonLabel ?? ""}
+                onChange={(e) =>
+                  update(index, { buttonLabel: e.target.value || null })
+                }
+                placeholder={t("Button label (optional)")}
+                maxLength={20}
+                className={`${SEQUENCE_INPUT} sm:w-44`}
+              />
+              <input
+                value={step.buttonUrl ?? ""}
+                onChange={(e) =>
+                  update(index, { buttonUrl: e.target.value || null })
+                }
+                placeholder="https://"
+                list={`campaign-links-${index}`}
+                className={`${SEQUENCE_INPUT} min-w-0 flex-1`}
+              />
+              <datalist id={`campaign-links-${index}`}>
+                {campaignLinks.map((url) => (
+                  <option key={url} value={url} />
+                ))}
+              </datalist>
+            </div>
+            {step.condition !== "ALWAYS" && campaignLinks.length === 0 && (
+              <p className="text-xs text-amber-500">
+                {t("This condition needs a tracked link on the campaign.")}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+      {steps.length < MAX_SEQUENCE_STEPS && (
+        <button
+          type="button"
+          onClick={add}
+          className="mt-3 w-full rounded-lg border border-border py-2 text-sm text-muted hover:text-foreground"
+        >
+          {t("+ Add a step")}
+        </button>
+      )}
+      <p className="mt-2 text-xs text-muted">
+        {"{username}"} {t("personalizes it. A button with one of the campaign links counts its clicks.")}
+      </p>
     </div>
   );
 }

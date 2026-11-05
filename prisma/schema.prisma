@@ -230,10 +230,57 @@ model Automation {
   dmLogs           DmLog[]
   trackedLinks     TrackedLink[]
   linkClicks       LinkClick[]
+  followUpSteps    FollowUpStep[]
 
   @@index([workspaceId])
   @@index([instagramAccountId])
   @@index([postId])
+}
+
+/// Which recipients a follow-up step applies to, based on whether they opened
+/// one of the campaign's tracked links after it was delivered.
+enum FollowUpCondition {
+  ALWAYS
+  NOT_CLICKED
+  CLICKED
+}
+
+/// One message of a multi-step follow-up sequence. Every step is scheduled
+/// when the link is delivered (delay counted from that moment) and is checked
+/// again when it fires: it is skipped if the recipient wrote back in the
+/// meantime, if its click condition no longer matches, or if Instagram's
+/// 24-hour messaging window has closed. When a campaign has steps, they
+/// replace the single legacy follow-up.
+model FollowUpStep {
+  id           String            @id @default(cuid())
+  automationId String
+  position     Int               @default(0)
+  delayMinutes Int
+  message      String
+  condition    FollowUpCondition @default(ALWAYS)
+  /// Optional web-link button. A URL equal to one of the campaign's tracked
+  /// links is sent as that tracked link, so its clicks keep counting.
+  buttonLabel  String?
+  buttonUrl    String?
+  createdAt    DateTime          @default(now())
+
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId])
+}
+
+/// Last time a person wrote to an Instagram account by DM. Used to stop a
+/// follow-up sequence as soon as the recipient replies.
+model ConversationActivity {
+  id                   String   @id @default(cuid())
+  /// The business account's Instagram ID (InstagramAccount.instagramId).
+  instagramBusinessId  String
+  /// The recipient's Instagram-scoped ID.
+  userId               String
+  lastInboundAt        DateTime
+  updatedAt            DateTime @updatedAt
+
+  @@unique([instagramBusinessId, userId])
 }
 
 model DmLog {
