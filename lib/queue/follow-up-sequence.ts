@@ -1,12 +1,14 @@
 import { prisma } from "@/lib/db/client";
 import { buildTrackedUrl } from "@/lib/tracking/message";
 import {
+  DEFAULT_SEND_WINDOW_TIME_ZONE,
   FOLLOW_UP_WINDOW_MS,
   MAX_FOLLOW_UP_STEP_DELAY_MINUTES,
 } from "@/lib/campaigns/follow-up-limits";
 import { FOLLOWUP_STEP_JOB_NAME, getDMQueue } from "./client";
 
 export {
+  DEFAULT_SEND_WINDOW_TIME_ZONE,
   FOLLOW_UP_WINDOW_MS,
   MAX_FOLLOW_UP_STEP_DELAY_MINUTES,
   MAX_FOLLOW_UP_STEPS,
@@ -43,6 +45,92 @@ export function followUpStepSkipReason({
   if (condition === "CLICKED" && !clicked) return "condition";
   if (condition === "NOT_CLICKED" && clicked) return "condition";
   return null;
+}
+
+/** Hour and minute of a moment in a given time zone. */
+function localTime(at: number, timeZone: string): { hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(new Date(at));
+  const value = (type: string) =>
+    Number(parts.find((part) => part.type === type)?.value ?? 0);
+  return { hour: value("hour") % 24, minute: value("minute") };
+}
+
+/**
+ * How long to wait until a step's sending hours open: 0 when `at` is already
+ * inside [startHour, endHour) in `timeZone`, or when the step has no hours.
+ */
+export function followUpSendWindowDelayMs({
+  at,
+  startHour,
+  endHour,
+  timeZone,
+}: {
+  at: number;
+  startHour: number | null;
+  endHour: number | null;
+  timeZone: string | null;
+}): number {
+  if (startHour === null || endHour === null || startHour >= endHour) return 0;
+  let zone = timeZone || DEFAULT_SEND_WINDOW_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+  } catch {
+    zone = DEFAULT_SEND_WINDOW_TIME_ZONE;
+  }
+  const { hour, minute } = localTime(at, zone);
+  const nowMinutes = hour * 60 + minute;
+  const start = startHour * 60;
+  const end = endHour * 60;
+  if (nowMinutes >= start && nowMinutes < end) return 0;
+  const waitMinutes =
+    nowMinutes < start ? start - nowMinutes : 24 * 60 - nowMinutes + start;
+  return waitMinutes * 60_000;
+}
+
+/**
+ * Margin kept before the 24-hour window closes when a step is pushed to its
+ * next sending hours, so it still gets out after waiting in the queue.
+ */
+const SEND_WINDOW_SAFETY_MS = 30 * 60_000;
+
+/**
+ * True when waiting `delayMs` for the sending hours still leaves the step
+ * inside Instagram's 24-hour window (with a safety margin).
+ */
+export function canWaitForSendWindow({
+  now,
+  startedAt,
+  delayMs,
+}: {
+  now: number;
+  startedAt: number;
+  delayMs: number;
+}): boolean {
+  return now + delayMs - startedAt < FOLLOW_UP_WINDOW_MS - SEND_WINDOW_SAFETY_MS;
+}
+
+/** Re-queue a step that fired outside its sending hours. */
+export async function deferFollowUpStep(
+  data: {
+    instagramAccountId: string;
+    accountConnectionId?: string;
+    userId: string;
+    automationId: string;
+    stepId: string;
+    startedAt: number;
+    commenterName?: string | null;
+  },
+  delayMs: number
+): Promise<void> {
+  await getDMQueue().add(FOLLOWUP_STEP_JOB_NAME, data, {
+    delay: delayMs,
+    jobId: `fstep_${data.stepId}_${data.userId}_${data.startedAt}_hours`,
+  });
 }
 
 export function clampFollowUpDelayMinutes(minutes: number): number {

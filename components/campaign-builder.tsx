@@ -67,6 +67,17 @@ interface FollowUpStepDraft {
   condition: FollowUpConditionDraft;
   buttonLabel: string | null;
   buttonUrl: string | null;
+  sendWindowStartHour?: number | null;
+  sendWindowEndHour?: number | null;
+  sendWindowTimeZone?: string | null;
+}
+
+function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Bogota";
+  } catch {
+    return "America/Bogota";
+  }
 }
 
 const MAX_SEQUENCE_STEPS = 10;
@@ -315,6 +326,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             condition: s.condition ?? "ALWAYS",
             buttonLabel: s.buttonLabel ?? null,
             buttonUrl: s.buttonUrl ?? null,
+            sendWindowStartHour: s.sendWindowStartHour ?? null,
+            sendWindowEndHour: s.sendWindowEndHour ?? null,
+            sendWindowTimeZone: s.sendWindowTimeZone ?? null,
           }))
         );
       })
@@ -465,6 +479,17 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           condition: s.condition,
           buttonLabel: s.buttonUrl?.trim() ? s.buttonLabel?.trim() || null : null,
           buttonUrl: s.buttonUrl?.trim() || "",
+          ...(s.sendWindowStartHour != null && s.sendWindowEndHour != null
+            ? {
+                sendWindowStartHour: s.sendWindowStartHour,
+                sendWindowEndHour: s.sendWindowEndHour,
+                sendWindowTimeZone: s.sendWindowTimeZone || browserTimeZone(),
+              }
+            : {
+                sendWindowStartHour: null,
+                sendWindowEndHour: null,
+                sendWindowTimeZone: null,
+              }),
         })),
       isActive: activeValue,
     };
@@ -1207,6 +1232,69 @@ function FollowUpSequenceEditor({
                   <option key={url} value={url} />
                 ))}
               </datalist>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={step.sendWindowStartHour != null}
+                onChange={(e) =>
+                  update(
+                    index,
+                    e.target.checked
+                      ? {
+                          sendWindowStartHour: 8,
+                          sendWindowEndHour: 19,
+                          sendWindowTimeZone: browserTimeZone(),
+                        }
+                      : {
+                          sendWindowStartHour: null,
+                          sendWindowEndHour: null,
+                          sendWindowTimeZone: null,
+                        }
+                  )
+                }
+              />
+              <span className="text-xs text-muted">{t("Only send between")}</span>
+              {step.sendWindowStartHour != null && (
+                <>
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={step.sendWindowStartHour}
+                    onChange={(e) =>
+                      update(index, {
+                        sendWindowStartHour: Math.max(
+                          0,
+                          Math.min(23, Math.floor(Number(e.target.value) || 0))
+                        ),
+                      })
+                    }
+                    className="w-16 rounded-lg border border-border bg-surface px-2 py-1 text-sm text-foreground focus:border-accent/40 focus:outline-none"
+                  />
+                  <span className="text-xs text-muted">{t("and")}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={step.sendWindowEndHour ?? 19}
+                    onChange={(e) =>
+                      update(index, {
+                        sendWindowEndHour: Math.max(
+                          1,
+                          Math.min(24, Math.floor(Number(e.target.value) || 1))
+                        ),
+                      })
+                    }
+                    className="w-16 rounded-lg border border-border bg-surface px-2 py-1 text-sm text-foreground focus:border-accent/40 focus:outline-none"
+                  />
+                  <span className="text-xs text-muted">
+                    {t("h ({zone}). Outside those hours it waits for the next opening, within 24 h.", {
+                      zone: step.sendWindowTimeZone || browserTimeZone(),
+                    })}
+                  </span>
+                </>
+              )}
             </div>
             {step.condition !== "ALWAYS" && campaignLinks.length === 0 && (
               <p className="text-xs text-amber-500">

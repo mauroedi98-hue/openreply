@@ -480,5 +480,7 @@
   "Button label (optional)": "按鈕文字（選填）",
   "This condition needs a tracked link on the campaign.": "此條件需要活動中有追蹤連結。",
   "+ Add a step": "+ 新增步驟",
-  "personalizes it. A button with one of the campaign links counts its clicks.": "可個人化。使用活動連結的按鈕會計算點擊。"
+  "personalizes it. A button with one of the campaign links counts its clicks.": "可個人化。使用活動連結的按鈕會計算點擊。",
+  "Only send between": "只在以下時段傳送：",
+  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "時（{zone}）。不在時段內時，會在 24 小時內等到下一個時段再傳送。"
 }

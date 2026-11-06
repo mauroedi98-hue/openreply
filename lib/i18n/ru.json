@@ -480,5 +480,7 @@
   "Button label (optional)": "Текст кнопки (необязательно)",
   "This condition needs a tracked link on the campaign.": "Для этого условия нужна отслеживаемая ссылка в кампании.",
   "+ Add a step": "+ Добавить шаг",
-  "personalizes it. A button with one of the campaign links counts its clicks.": "персонализирует. Кнопка со ссылкой кампании учитывает клики."
+  "personalizes it. A button with one of the campaign links counts its clicks.": "персонализирует. Кнопка со ссылкой кампании учитывает клики.",
+  "Only send between": "Отправлять только с",
+  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "ч ({zone}). Вне этих часов ждёт следующего окна, в пределах 24 ч."
 }

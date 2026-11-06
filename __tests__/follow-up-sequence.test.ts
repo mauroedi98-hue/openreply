@@ -7,7 +7,9 @@ vi.mock("@/lib/queue/client", () => ({
 }));
 
 import {
+  canWaitForSendWindow,
   clampFollowUpDelayMinutes,
+  followUpSendWindowDelayMs,
   followUpStepSkipReason,
   MAX_FOLLOW_UP_STEP_DELAY_MINUTES,
   resolveFollowUpButton,
@@ -60,6 +62,69 @@ describe("followUpStepSkipReason", () => {
     expect(
       followUpStepSkipReason({ ...base, condition: "NOT_CLICKED", clicked: false })
     ).toBeNull();
+  });
+});
+
+describe("followUpSendWindowDelayMs (Bogotá is UTC-5, no DST)", () => {
+  const window = { startHour: 8, endHour: 19, timeZone: "America/Bogota" };
+  // 2026-11-06 at a given Bogotá hour, expressed in UTC.
+  const bogota = (hour: number, minute = 0) =>
+    Date.UTC(2026, 10, 6, hour + 5, minute);
+
+  it("sends right away inside the hours", () => {
+    expect(followUpSendWindowDelayMs({ ...window, at: bogota(10) })).toBe(0);
+    expect(followUpSendWindowDelayMs({ ...window, at: bogota(8) })).toBe(0);
+  });
+
+  it("waits until the morning when it fires before opening", () => {
+    expect(followUpSendWindowDelayMs({ ...window, at: bogota(3, 30) })).toBe(
+      (4 * 60 + 30) * MIN
+    );
+  });
+
+  it("waits until the next morning when it fires after closing", () => {
+    expect(followUpSendWindowDelayMs({ ...window, at: bogota(19) })).toBe(
+      13 * 60 * MIN
+    );
+    expect(followUpSendWindowDelayMs({ ...window, at: bogota(22, 15) })).toBe(
+      (9 * 60 + 45) * MIN
+    );
+  });
+
+  it("has no hours when they are not set or make no sense", () => {
+    expect(
+      followUpSendWindowDelayMs({
+        at: bogota(3),
+        startHour: null,
+        endHour: null,
+        timeZone: null,
+      })
+    ).toBe(0);
+    expect(
+      followUpSendWindowDelayMs({
+        at: bogota(3),
+        startHour: 19,
+        endHour: 8,
+        timeZone: "America/Bogota",
+      })
+    ).toBe(0);
+  });
+
+  it("falls back to Bogotá for an unknown time zone", () => {
+    expect(
+      followUpSendWindowDelayMs({ ...window, timeZone: "Mars/Base", at: bogota(3, 30) })
+    ).toBe((4 * 60 + 30) * MIN);
+  });
+});
+
+describe("canWaitForSendWindow", () => {
+  it("only waits while it stays inside the 24-hour window", () => {
+    expect(
+      canWaitForSendWindow({ now: START + 6 * 60 * MIN, startedAt: START, delayMs: 9 * 60 * MIN })
+    ).toBe(true);
+    expect(
+      canWaitForSendWindow({ now: START + 20 * 60 * MIN, startedAt: START, delayMs: 4 * 60 * MIN })
+    ).toBe(false);
   });
 });
 

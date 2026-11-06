@@ -480,5 +480,7 @@
   "Button label (optional)": "Texto do botão (opcional)",
   "This condition needs a tracked link on the campaign.": "Esta condição precisa de um link rastreado na campanha.",
   "+ Add a step": "+ Adicionar etapa",
-  "personalizes it. A button with one of the campaign links counts its clicks.": "personaliza. Um botão com um dos links da campanha conta os cliques."
+  "personalizes it. A button with one of the campaign links counts its clicks.": "personaliza. Um botão com um dos links da campanha conta os cliques.",
+  "Only send between": "Enviar só entre",
+  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "h ({zone}). Fora desse horário, espera a próxima abertura, dentro de 24 h."
 }

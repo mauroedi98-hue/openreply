@@ -20,6 +20,7 @@ import {
   getCurrentWorkspaceContext,
 } from "@/lib/workspace-access";
 import {
+  DEFAULT_SEND_WINDOW_TIME_ZONE,
   MAX_FOLLOW_UP_STEPS,
   MAX_FOLLOW_UP_STEP_DELAY_MINUTES,
 } from "@/lib/campaigns/follow-up-limits";
@@ -47,11 +48,25 @@ const followUpStepSchema = z
       .union([z.string().url(), z.literal("")])
       .optional()
       .nullable(),
+    // Optional sending hours, e.g. 8 and 19 for 8:00–19:00.
+    sendWindowStartHour: z.number().int().min(0).max(23).optional().nullable(),
+    sendWindowEndHour: z.number().int().min(1).max(24).optional().nullable(),
+    sendWindowTimeZone: z.string().trim().max(64).optional().nullable(),
   })
   .refine((s) => !s.buttonUrl || Boolean(s.buttonLabel?.trim()), {
     message: "A button link needs a button label",
     path: ["buttonLabel"],
-  });
+  })
+  .refine(
+    (s) =>
+      (s.sendWindowStartHour == null) === (s.sendWindowEndHour == null) &&
+      (s.sendWindowStartHour == null ||
+        s.sendWindowStartHour < (s.sendWindowEndHour as number)),
+    {
+      message: "Sending hours need a start before the end",
+      path: ["sendWindowStartHour"],
+    }
+  );
 
 const followUpStepsSchema = z
   .array(followUpStepSchema)
@@ -65,6 +80,12 @@ function followUpStepRows(steps: z.infer<typeof followUpStepsSchema>) {
     condition: step.condition,
     buttonLabel: step.buttonUrl ? step.buttonLabel?.trim() || null : null,
     buttonUrl: step.buttonUrl || null,
+    sendWindowStartHour: step.sendWindowStartHour ?? null,
+    sendWindowEndHour: step.sendWindowEndHour ?? null,
+    sendWindowTimeZone:
+      step.sendWindowStartHour != null
+        ? step.sendWindowTimeZone || DEFAULT_SEND_WINDOW_TIME_ZONE
+        : null,
   }));
 }
 

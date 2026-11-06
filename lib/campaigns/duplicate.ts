@@ -89,6 +89,9 @@ export async function duplicateCampaign({
                 condition: step.condition,
                 buttonLabel: step.buttonLabel,
                 buttonUrl: step.buttonUrl,
+                sendWindowStartHour: step.sendWindowStartHour,
+                sendWindowEndHour: step.sendWindowEndHour,
+                sendWindowTimeZone: step.sendWindowTimeZone,
               })),
             },
           }

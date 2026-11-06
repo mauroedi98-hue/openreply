@@ -2007,6 +2007,70 @@ describe("DM Worker — follow-up sequence", () => {
     expect(mockSendDirectMessage).not.toHaveBeenCalled();
   });
 
+  describe("sending hours", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const businessHours = {
+      sendWindowStartHour: 8,
+      sendWindowEndHour: 19,
+      sendWindowTimeZone: "America/Bogota",
+    };
+
+    it("waits for the morning instead of sending at night", async () => {
+      // 02:00 in Bogotá; the link went out 6 h earlier (20:00).
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(Date.UTC(2026, 10, 6, 7, 0)));
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep(businessHours)
+      );
+
+      await getProcessor()(
+        createStepJob({ startedAt: Date.now() - 6 * 60 * 60_000 })
+      );
+
+      expect(mockSendDirectMessage).not.toHaveBeenCalled();
+      const deferred = mockQueueAdd.mock.calls.find(
+        ([name]) => name === "process-followup-step"
+      );
+      expect(deferred?.[2]).toEqual(
+        expect.objectContaining({ delay: 6 * 60 * 60_000 })
+      );
+    });
+
+    it("drops the step when the next opening is past the 24-hour window", async () => {
+      // 23:00 in Bogotá; the link went out 20 h earlier.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(Date.UTC(2026, 10, 7, 4, 0)));
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep(businessHours)
+      );
+
+      await getProcessor()(
+        createStepJob({ startedAt: Date.now() - 20 * 60 * 60_000 })
+      );
+
+      expect(mockSendDirectMessage).not.toHaveBeenCalled();
+      expect(
+        mockQueueAdd.mock.calls.some(([name]) => name === "process-followup-step")
+      ).toBe(false);
+    });
+
+    it("sends inside the hours", async () => {
+      // 11:00 in Bogotá.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(Date.UTC(2026, 10, 6, 16, 0)));
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep(businessHours)
+      );
+
+      await getProcessor()(createStepJob({ startedAt: Date.now() - 6 * 60 * 60_000 }));
+
+      expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("sends nothing when the step was removed or the campaign paused", async () => {
     await getProcessor()(createStepJob());
     mockPrisma.followUpStep.findFirst.mockResolvedValue(

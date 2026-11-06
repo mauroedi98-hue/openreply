@@ -22,6 +22,9 @@ import {
   type ProcessFollowUpStepJob,
 } from "./client";
 import {
+  canWaitForSendWindow,
+  deferFollowUpStep,
+  followUpSendWindowDelayMs,
   followUpStepSkipReason,
   recordInboundMessage,
   resolveFollowUpButton,
@@ -1404,6 +1407,27 @@ async function processFollowUpStep(
     console.log(
       `[DM Worker] Follow-up step ${step.id} skipped (${skipReason})`
     );
+    return;
+  }
+
+  // Sending hours (e.g. business hours): wait for the next opening if it is
+  // still inside the 24-hour window, otherwise drop the step. Every check
+  // above runs again when the deferred job fires.
+  const now = Date.now();
+  const waitMs = followUpSendWindowDelayMs({
+    at: now,
+    startHour: step.sendWindowStartHour,
+    endHour: step.sendWindowEndHour,
+    timeZone: step.sendWindowTimeZone,
+  });
+  if (waitMs > 0) {
+    if (canWaitForSendWindow({ now, startedAt, delayMs: waitMs })) {
+      await deferFollowUpStep(job.data, waitMs);
+    } else {
+      console.log(
+        `[DM Worker] Follow-up step ${step.id} skipped (outside sending hours)`
+      );
+    }
     return;
   }
 

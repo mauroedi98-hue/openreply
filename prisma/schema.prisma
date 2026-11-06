@@ -262,6 +262,13 @@ model FollowUpStep {
   /// links is sent as that tracked link, so its clicks keep counting.
   buttonLabel  String?
   buttonUrl    String?
+  /// Optional sending hours (e.g. business hours). When the step fires
+  /// outside [start, end) in this time zone it waits for the next opening,
+  /// as long as that is still inside the 24-hour window; otherwise it is
+  /// skipped. Both hours null = send at any time.
+  sendWindowStartHour Int?
+  sendWindowEndHour   Int?
+  sendWindowTimeZone  String?
   createdAt    DateTime          @default(now())
 
   automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)

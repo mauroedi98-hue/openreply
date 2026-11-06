@@ -8,5 +8,8 @@ export const FOLLOW_UP_WINDOW_MS = 24 * 60 * 60 * 1000;
  */
 export const MAX_FOLLOW_UP_STEP_DELAY_MINUTES = 23 * 60 + 30;
 
+/** Time zone used when a step has sending hours but no zone of its own. */
+export const DEFAULT_SEND_WINDOW_TIME_ZONE = "America/Bogota";
+
 /** Most steps a campaign's follow-up sequence may have. */
 export const MAX_FOLLOW_UP_STEPS = 10;
