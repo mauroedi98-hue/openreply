@@ -283,6 +283,63 @@ async function sendRevealDirectMessage({
   }
 }
 
+/**
+ * One resource per person per campaign. Every path that hands over a
+ * campaign's link (button tap, DM keyword, comment without opening DM) leaves a
+ * `reveal:<personId>` log. Once it exists, a new comment, a new DM with the
+ * keyword or another button tap from that person sends nothing at all — the
+ * conversation is left for a human to answer.
+ */
+function resourceMarkerId(personId: string): string {
+  return `reveal:${personId}`;
+}
+
+async function hasReceivedResource(
+  automationId: string,
+  personId: string
+): Promise<boolean> {
+  const marker = await prisma.dmLog.findUnique({
+    where: {
+      automationId_commentId: {
+        automationId,
+        commentId: resourceMarkerId(personId),
+      },
+    },
+  });
+  return marker?.status === "SENT" || Boolean(marker?.dmDeliveryUnconfirmed);
+}
+
+async function markResourceDelivered({
+  automation,
+  personId,
+  commenterName,
+  commentText,
+}: {
+  automation: { id: string; workspaceId: string; instagramAccountId: string };
+  personId: string;
+  commenterName: string | null;
+  commentText: string;
+}): Promise<void> {
+  const commentId = resourceMarkerId(personId);
+  await prisma.dmLog.upsert({
+    where: { automationId_commentId: { automationId: automation.id, commentId } },
+    create: {
+      workspaceId: automation.workspaceId,
+      automationId: automation.id,
+      instagramAccountId: automation.instagramAccountId,
+      commenterId: personId,
+      commenterName,
+      commentText,
+      commentId,
+      status: "SENT",
+      dmSentAt: new Date(),
+    },
+    update: { status: "SENT", dmSentAt: new Date(), errorMessage: null },
+  });
+}
+
+const ALREADY_RECEIVED_MESSAGE =
+  "Esta persona ya recibió el recurso de esta campaña: no se reenvía nada";
 
 function connectionScope(data: DmQueueJob) {
   return data.accountConnectionId ? { instagramAccountId: data.accountConnectionId } : {};
@@ -361,6 +418,34 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         data: { dmDeliveryUnconfirmed: true },
       });
       existingLog.dmDeliveryUnconfirmed = true;
+    }
+
+    // This person already got this campaign's resource (from an earlier
+    // comment, a DM or a button tap): stay silent — no public reply, no DM.
+    // A retry of the comment that itself delivered it is still SENT here and
+    // goes through the normal path so a pending public reply can finish.
+    if (
+      existingLog?.status !== "SENT" &&
+      (existingLog?.errorMessage === ALREADY_RECEIVED_MESSAGE ||
+        (await hasReceivedResource(automation.id, commenterId)))
+    ) {
+      if (!existingLog) {
+        await prisma.dmLog.create({
+          data: {
+            workspaceId: automation.workspaceId,
+            automationId: automation.id,
+            instagramAccountId: automation.instagramAccountId,
+            commenterId,
+            commenterName,
+            commentText,
+            commentId,
+            matchedKeyword: matchResult.matchedKeyword,
+            status: "SKIPPED_DEDUP",
+            errorMessage: ALREADY_RECEIVED_MESSAGE,
+          },
+        }).catch(() => {});
+      }
+      continue;
     }
 
     const alreadyDmd = existingLog?.status === "SENT";
@@ -790,6 +875,21 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           errorMessage: null,
         },
       });
+      // The link itself went out in this private reply (no opening DM, no
+      // follow prompt): remember it so this person is never sent it again.
+      if (!useOpeningDm && !sendFollowPrompt) {
+        await markResourceDelivered({
+          automation,
+          personId: commenterId,
+          commenterName: commenterName ?? null,
+          commentText,
+        }).catch((markError) => {
+          console.log(
+            "[DM Worker] Failed to record delivered resource:",
+            formatError(markError)
+          );
+        });
+      }
     } catch (error) {
       const sendError = classifySendError(error);
       // Retain reservations if the provider may have delivered the message.
@@ -929,25 +1029,11 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     return;
   }
 
-  // Duplicate sends are enabled: every button tap re-sends the reveal
-  // instead of only firing once per person.
-  const dedupeId = `reveal:${userId}`;
+  // One resource per person: once the reveal went out (by any path), later
+  // taps — and the read fallback — send nothing.
+  const dedupeId = resourceMarkerId(userId);
 
-  if (fallback) {
-    const existingReveal = await prisma.dmLog.findUnique({
-      where: {
-        automationId_commentId: {
-          automationId: automation.id,
-          commentId: dedupeId,
-        },
-      },
-    });
-    if (
-      existingReveal?.status === "SENT" ||
-      existingReveal?.dmDeliveryUnconfirmed
-    )
-      return;
-  }
+  if (await hasReceivedResource(automation.id, userId)) return;
 
   let accessToken: InstagramContext;
   try {
@@ -1555,8 +1641,28 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
     if (
       existingLog?.status === "SENT" ||
       existingLog?.status === "SKIPPED_PLAN_LIMIT" ||
+      existingLog?.status === "SKIPPED_DEDUP" ||
       existingLog?.dmDeliveryUnconfirmed
     ) {
+      continue;
+    }
+
+    // This person already got this campaign's resource: writing the keyword
+    // again (or anything that matches it) gets no automatic reply.
+    if (await hasReceivedResource(automation.id, senderId)) {
+      await prisma.dmLog.create({
+        data: {
+          workspaceId: automation.workspaceId,
+          automationId: automation.id,
+          instagramAccountId: automation.instagramAccountId,
+          commenterId: senderId,
+          commentText: messageText,
+          commentId: dedupeId,
+          matchedKeyword: matchResult.matchedKeyword,
+          status: "SKIPPED_DEDUP",
+          errorMessage: ALREADY_RECEIVED_MESSAGE,
+        },
+      }).catch(() => {});
       continue;
     }
 
@@ -1690,6 +1796,18 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           userId: senderId,
           commenterName: commenterName,
           context: "message trigger",
+        });
+
+        await markResourceDelivered({
+          automation,
+          personId: senderId,
+          commenterName,
+          commentText: messageText,
+        }).catch((markError) => {
+          console.log(
+            "[DM Worker] Failed to record delivered resource:",
+            formatError(markError)
+          );
         });
 
         // The link has been delivered, so the follow-ups apply here exactly as
