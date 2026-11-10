@@ -216,6 +216,31 @@ export async function sendDirectMessage({
   return sendZernioMessage({ context, recipientId: userId, text: message });
 }
 
+/**
+ * Send a voice note by public URL. Only the Meta connection can send audio;
+ * a Zernio connection rejects it so the caller can fall back to text.
+ */
+export async function sendDirectAudioMessage({
+  context,
+  instagramAccountId,
+  userId,
+  audioUrl,
+}: {
+  context: InstagramContext;
+  instagramAccountId: string;
+  userId: string;
+  audioUrl: string;
+}) {
+  if (context.provider === "META")
+    return meta.sendDirectAudio(
+      context.accessToken,
+      instagramAccountId,
+      userId,
+      audioUrl
+    );
+  throw new Error("Audio messages are only supported on Meta connections");
+}
+
 export async function sendDirectMessageWithLinkButton({
   context,
   instagramAccountId,

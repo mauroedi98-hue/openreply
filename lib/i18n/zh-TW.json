@@ -482,5 +482,10 @@
   "+ Add a step": "+ 新增步驟",
   "personalizes it. A button with one of the campaign links counts its clicks.": "可個人化。使用活動連結的按鈕會計算點擊。",
   "Only send between": "只在以下時段傳送：",
-  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "時（{zone}）。不在時段內時，會在 24 小時內等到下一個時段再傳送。"
+  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "時（{zone}）。不在時段內時，會在 24 小時內等到下一個時段再傳送。",
+  "Remove audio": "移除音訊",
+  "Uploading audio...": "正在上傳音訊...",
+  "+ Add a voice note (optional)": "+ 加入語音訊息（選填）",
+  "Could not upload the audio. Use m4a, aac, wav or mp4 under 4 MB.": "無法上傳音訊。請使用 4 MB 以下的 m4a、aac、wav 或 mp4。",
+  "m4a, aac, wav or mp4 under 4 MB. It is sent before the text, and with audio the text is optional.": "4 MB 以下的 m4a、aac、wav 或 mp4。會在文字之前傳送，有音訊時文字可留空。"
 }

@@ -20,6 +20,11 @@ import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
 import { readCache, writeCache } from "@/lib/client-cache";
 import {
+  FOLLOW_UP_AUDIO_ACCEPT,
+  MAX_FOLLOW_UP_AUDIO_BYTES,
+  resolveFollowUpAudioType,
+} from "@/lib/campaigns/follow-up-audio";
+import {
   IMPORT_QUEUE_KEY,
   IMPORT_ACCOUNT_KEY,
   type ImportRow,
@@ -70,6 +75,7 @@ interface FollowUpStepDraft {
   sendWindowStartHour?: number | null;
   sendWindowEndHour?: number | null;
   sendWindowTimeZone?: string | null;
+  audioUrl?: string | null;
 }
 
 function browserTimeZone(): string {
@@ -329,6 +335,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             sendWindowStartHour: s.sendWindowStartHour ?? null,
             sendWindowEndHour: s.sendWindowEndHour ?? null,
             sendWindowTimeZone: s.sendWindowTimeZone ?? null,
+            audioUrl: s.audioUrl ?? null,
           }))
         );
       })
@@ -472,10 +479,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       followUpMessage: followUpEnabled ? followUpMessage.trim() : "",
       followUpDelayMinutes: followUpEnabled ? followUpDelayMinutes : 0,
       followUpSteps: followUpSteps
-        .filter((s) => s.message.trim())
+        .filter((s) => s.message.trim() || s.audioUrl)
         .map((s) => ({
           delayMinutes: s.delayMinutes,
           message: s.message.trim(),
+          audioUrl: s.audioUrl || "",
           condition: s.condition,
           buttonLabel: s.buttonUrl?.trim() ? s.buttonLabel?.trim() || null : null,
           buttonUrl: s.buttonUrl?.trim() || "",
@@ -1200,6 +1208,10 @@ function FollowUpSequenceEditor({
                 {t("Remove")}
               </button>
             </div>
+            <FollowUpAudioField
+              audioUrl={step.audioUrl ?? null}
+              onChange={(audioUrl) => update(index, { audioUrl })}
+            />
             <textarea
               value={step.message}
               onChange={(e) => update(index, { message: e.target.value })}
@@ -1315,6 +1327,88 @@ function FollowUpSequenceEditor({
       )}
       <p className="mt-2 text-xs text-muted">
         {"{username}"} {t("personalizes it. A button with one of the campaign links counts its clicks.")}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Optional voice note for a follow-up step: upload, listen, remove. The file
+ * is stored by /api/media and sent before the step's text.
+ */
+function FollowUpAudioField({
+  audioUrl,
+  onChange,
+}: {
+  audioUrl: string | null;
+  onChange: (audioUrl: string | null) => void;
+}) {
+  const { t } = useI18n();
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState(false);
+
+  const upload = async (file: File) => {
+    setError(false);
+    if (
+      !resolveFollowUpAudioType(file.name) ||
+      file.size > MAX_FOLLOW_UP_AUDIO_BYTES
+    ) {
+      setError(true);
+      return;
+    }
+    setUploading(true);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch("/api/media", { method: "POST", body });
+      const json = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        data?: { url: string };
+      } | null;
+      if (!res.ok || !json?.success || !json.data?.url) throw new Error();
+      onChange(json.data.url);
+    } catch {
+      setError(true);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (audioUrl) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <audio controls src={audioUrl} className="h-9 max-w-full" />
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          className="text-xs text-muted hover:text-foreground"
+        >
+          {t("Remove audio")}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground">
+        <input
+          type="file"
+          accept={FOLLOW_UP_AUDIO_ACCEPT}
+          className="hidden"
+          disabled={uploading}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void upload(file);
+          }}
+        />
+        {uploading ? t("Uploading audio...") : t("+ Add a voice note (optional)")}
+      </label>
+      <p className={`text-xs ${error ? "text-amber-500" : "text-muted"}`}>
+        {error
+          ? t("Could not upload the audio. Use m4a, aac, wav or mp4 under 4 MB.")
+          : t("m4a, aac, wav or mp4 under 4 MB. It is sent before the text, and with audio the text is optional.")}
       </p>
     </div>
   );

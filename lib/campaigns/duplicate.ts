@@ -92,6 +92,7 @@ export async function duplicateCampaign({
                 sendWindowStartHour: step.sendWindowStartHour,
                 sendWindowEndHour: step.sendWindowEndHour,
                 sendWindowTimeZone: step.sendWindowTimeZone,
+                audioUrl: step.audioUrl,
               })),
             },
           }

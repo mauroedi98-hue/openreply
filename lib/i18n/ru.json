@@ -482,5 +482,10 @@
   "+ Add a step": "+ Добавить шаг",
   "personalizes it. A button with one of the campaign links counts its clicks.": "персонализирует. Кнопка со ссылкой кампании учитывает клики.",
   "Only send between": "Отправлять только с",
-  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "ч ({zone}). Вне этих часов ждёт следующего окна, в пределах 24 ч."
+  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "ч ({zone}). Вне этих часов ждёт следующего окна, в пределах 24 ч.",
+  "Remove audio": "Удалить аудио",
+  "Uploading audio...": "Загрузка аудио...",
+  "+ Add a voice note (optional)": "+ Добавить голосовое сообщение (необязательно)",
+  "Could not upload the audio. Use m4a, aac, wav or mp4 under 4 MB.": "Не удалось загрузить аудио. Используйте m4a, aac, wav или mp4 до 4 МБ.",
+  "m4a, aac, wav or mp4 under 4 MB. It is sent before the text, and with audio the text is optional.": "m4a, aac, wav или mp4 до 4 МБ. Отправляется перед текстом; с аудио текст необязателен."
 }

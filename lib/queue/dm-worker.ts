@@ -39,6 +39,7 @@ import {
   resolveRecipientName,
   sendCommentReply,
   sendDirectMessage,
+  sendDirectAudioMessage,
   sendDirectMessageWithButton,
   sendDirectMessageWithLinkButton,
   sendPrivateReply,
@@ -1537,6 +1538,25 @@ async function processFollowUpStep(
     trackedLinks: automation.trackedLinks,
     recipientToken,
   });
+
+  // Voice note first, then the text. A failed audio is logged and the text
+  // still goes out, so the person always gets the step's message.
+  if (step.audioUrl) {
+    try {
+      await sendDirectAudioMessage({
+        context: accessToken,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId,
+        audioUrl: step.audioUrl,
+      });
+    } catch (error) {
+      console.log(
+        "[DM Worker] Failed to send follow-up audio:",
+        formatError(error)
+      );
+    }
+  }
+  if (!text.trim() && !button) return;
 
   try {
     if (!button) {

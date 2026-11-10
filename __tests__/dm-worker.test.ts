@@ -8,6 +8,7 @@ const {
   mockGetUserFollowStatus,
   mockSendDirectMessageWithButton,
   mockSendDirectMessage,
+  mockSendDirectAudio,
   mockSendDirectMessageWithLinkButton,
   mockDecryptToken,
   mockMatchKeywords,
@@ -58,6 +59,7 @@ const {
   mockGetUserFollowStatus: vi.fn(),
   mockSendDirectMessageWithButton: vi.fn(),
   mockSendDirectMessage: vi.fn(),
+  mockSendDirectAudio: vi.fn(),
   mockSendDirectMessageWithLinkButton: vi.fn(),
   mockDecryptToken: vi.fn(),
   mockMatchKeywords: vi.fn(),
@@ -79,6 +81,7 @@ vi.mock("@/lib/meta/client", () => ({
   getUserFollowStatus: mockGetUserFollowStatus,
   sendDirectMessageWithButton: mockSendDirectMessageWithButton,
   sendDirectMessage: mockSendDirectMessage,
+  sendDirectAudio: mockSendDirectAudio,
   sendDirectMessageWithLinkButton: mockSendDirectMessageWithLinkButton,
   sendCommentReply: vi.fn(),
   MetaApiError: class MetaApiError extends Error {
@@ -2068,6 +2071,70 @@ describe("DM Worker — follow-up sequence", () => {
       await getProcessor()(createStepJob({ startedAt: Date.now() - 6 * 60 * 60_000 }));
 
       expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("voice notes", () => {
+    const AUDIO_URL = "https://openreply.example/api/media/asset_1.m4a";
+
+    it("sends the audio first and then the text", async () => {
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep({ audioUrl: AUDIO_URL })
+      );
+
+      await getProcessor()(createStepJob());
+
+      expect(mockSendDirectAudio).toHaveBeenCalledWith(
+        "decrypted_token",
+        "ig_456",
+        "commenter_999",
+        AUDIO_URL
+      );
+      expect(mockSendDirectMessage).toHaveBeenCalledWith(
+        "decrypted_token",
+        "ig_456",
+        "commenter_999",
+        "¿Te abrió el enlace, commenter_user?"
+      );
+      expect(mockSendDirectAudio.mock.invocationCallOrder[0]).toBeLessThan(
+        mockSendDirectMessage.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("sends only the audio when the step has no text or button", async () => {
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep({ audioUrl: AUDIO_URL, message: "" })
+      );
+
+      await getProcessor()(createStepJob());
+
+      expect(mockSendDirectAudio).toHaveBeenCalledTimes(1);
+      expect(mockSendDirectMessage).not.toHaveBeenCalled();
+      expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    });
+
+    it("still sends the text when the audio fails", async () => {
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep({ audioUrl: AUDIO_URL })
+      );
+      mockSendDirectAudio.mockRejectedValueOnce(new Error("bad audio"));
+
+      await getProcessor()(createStepJob());
+
+      expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not send the audio once the person has written back", async () => {
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep({ audioUrl: AUDIO_URL })
+      );
+      mockPrisma.conversationActivity.findUnique.mockResolvedValue({
+        lastInboundAt: new Date(),
+      });
+
+      await getProcessor()(createStepJob());
+
+      expect(mockSendDirectAudio).not.toHaveBeenCalled();
     });
   });
 

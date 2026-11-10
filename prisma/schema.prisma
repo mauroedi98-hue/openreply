@@ -86,6 +86,7 @@ model Workspace {
   webhookEvents     WebhookEvent[]
   operationalEvents OperationalEvent[]
   serviceKeys       ServiceKey[]
+  mediaAssets       MediaAsset[]
 
   @@index([ownerId])
 }
@@ -269,11 +270,31 @@ model FollowUpStep {
   sendWindowStartHour Int?
   sendWindowEndHour   Int?
   sendWindowTimeZone  String?
+  /// Optional voice note (public URL, usually /api/media/<id>) sent before
+  /// the text. With audio the text may be empty.
+  audioUrl     String?
   createdAt    DateTime          @default(now())
 
   automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
 
   @@index([automationId])
+}
+
+/// An audio file uploaded for follow-up steps. Kept in Postgres and served at
+/// a public URL (/api/media/<id>) because Instagram downloads attachments
+/// from a URL when the message is sent.
+model MediaAsset {
+  id          String   @id @default(cuid())
+  workspaceId String
+  mimeType    String
+  filename    String
+  size        Int
+  data        Bytes
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
 
 /// Last time a person wrote to an Instagram account by DM. Used to stop a

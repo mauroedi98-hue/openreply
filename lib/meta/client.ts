@@ -414,6 +414,36 @@ export async function sendDirectMessage(
 }
 
 /**
+ * Send a voice note (audio attachment) by public URL. Instagram downloads the
+ * file when the message is sent; it accepts aac, m4a, wav or mp4.
+ */
+export async function sendDirectAudio(
+  accessToken: string,
+  instagramAccountId: string,
+  userId: string,
+  audioUrl: string
+): Promise<{ recipient_id: string; message_id: string }> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${instagramAccountId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient: { id: userId },
+        message: {
+          attachment: { type: "audio", payload: { url: audioUrl } },
+        },
+      }),
+    }
+  );
+
+  return handleResponse(response);
+}
+
+/**
  * Send a direct message as a button template with up to 3 web_url buttons —
  * the reveal message plus tappable link buttons (cleaner than inline URLs).
  */

@@ -38,7 +38,12 @@ const followUpStepSchema = z
       .int()
       .min(0)
       .max(MAX_FOLLOW_UP_STEP_DELAY_MINUTES),
-    message: z.string().trim().min(1).max(1000),
+    // May be empty when the step sends a voice note.
+    message: z.string().trim().max(1000).optional().default(""),
+    audioUrl: z
+      .union([z.string().url().max(500), z.literal("")])
+      .optional()
+      .nullable(),
     condition: z
       .enum(["ALWAYS", "NOT_CLICKED", "CLICKED"])
       .optional()
@@ -52,6 +57,10 @@ const followUpStepSchema = z
     sendWindowStartHour: z.number().int().min(0).max(23).optional().nullable(),
     sendWindowEndHour: z.number().int().min(1).max(24).optional().nullable(),
     sendWindowTimeZone: z.string().trim().max(64).optional().nullable(),
+  })
+  .refine((s) => Boolean(s.message) || Boolean(s.audioUrl), {
+    message: "A step needs a message or an audio",
+    path: ["message"],
   })
   .refine((s) => !s.buttonUrl || Boolean(s.buttonLabel?.trim()), {
     message: "A button link needs a button label",
@@ -82,6 +91,7 @@ function followUpStepRows(steps: z.infer<typeof followUpStepsSchema>) {
     buttonUrl: step.buttonUrl || null,
     sendWindowStartHour: step.sendWindowStartHour ?? null,
     sendWindowEndHour: step.sendWindowEndHour ?? null,
+    audioUrl: step.audioUrl || null,
     sendWindowTimeZone:
       step.sendWindowStartHour != null
         ? step.sendWindowTimeZone || DEFAULT_SEND_WINDOW_TIME_ZONE

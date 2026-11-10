@@ -482,5 +482,10 @@
   "+ Add a step": "+ Adicionar etapa",
   "personalizes it. A button with one of the campaign links counts its clicks.": "personaliza. Um botão com um dos links da campanha conta os cliques.",
   "Only send between": "Enviar só entre",
-  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "h ({zone}). Fora desse horário, espera a próxima abertura, dentro de 24 h."
+  "h ({zone}). Outside those hours it waits for the next opening, within 24 h.": "h ({zone}). Fora desse horário, espera a próxima abertura, dentro de 24 h.",
+  "Remove audio": "Remover áudio",
+  "Uploading audio...": "Enviando áudio...",
+  "+ Add a voice note (optional)": "+ Adicionar um áudio (opcional)",
+  "Could not upload the audio. Use m4a, aac, wav or mp4 under 4 MB.": "Não foi possível enviar o áudio. Use m4a, aac, wav ou mp4 com menos de 4 MB.",
+  "m4a, aac, wav or mp4 under 4 MB. It is sent before the text, and with audio the text is optional.": "m4a, aac, wav ou mp4 com menos de 4 MB. É enviado antes do texto e, com áudio, o texto é opcional."
 }
