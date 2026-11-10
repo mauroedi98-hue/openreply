@@ -49,6 +49,10 @@ const {
       upsert: vi.fn().mockResolvedValue({}),
       findUnique: vi.fn(),
     },
+    followUpAudioDelivery: {
+      create: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    },
     linkClick: {
       findFirst: vi.fn(),
     },
@@ -2122,6 +2126,58 @@ describe("DM Worker — follow-up sequence", () => {
       await getProcessor()(createStepJob());
 
       expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not repeat the audio for a person who already got it from another resource", async () => {
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep({ audioUrl: AUDIO_URL })
+      );
+      mockPrisma.followUpAudioDelivery.create.mockRejectedValueOnce(
+        Object.assign(new Error("Unique constraint failed"), { code: "P2002" })
+      );
+
+      await getProcessor()(createStepJob());
+
+      expect(mockSendDirectAudio).not.toHaveBeenCalled();
+      // The step's own text still goes out.
+      expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("records the audio delivery per person and account", async () => {
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep({ audioUrl: AUDIO_URL, message: "" })
+      );
+
+      await getProcessor()(createStepJob());
+
+      expect(mockPrisma.followUpAudioDelivery.create).toHaveBeenCalledWith({
+        data: {
+          instagramBusinessId: "ig_456",
+          userId: "commenter_999",
+          audioUrl: AUDIO_URL,
+          automationId: "auto_789",
+        },
+      });
+      expect(mockSendDirectAudio).toHaveBeenCalledTimes(1);
+    });
+
+    it("frees the audio for a later campaign when the send fails", async () => {
+      mockPrisma.followUpStep.findFirst.mockResolvedValue(
+        buildStep({ audioUrl: AUDIO_URL })
+      );
+      mockSendDirectAudio.mockRejectedValueOnce(new Error("bad audio"));
+
+      await getProcessor()(createStepJob());
+
+      expect(mockPrisma.followUpAudioDelivery.delete).toHaveBeenCalledWith({
+        where: {
+          instagramBusinessId_userId_audioUrl: {
+            instagramBusinessId: "ig_456",
+            userId: "commenter_999",
+            audioUrl: AUDIO_URL,
+          },
+        },
+      });
     });
 
     it("does not send the audio once the person has written back", async () => {

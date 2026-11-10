@@ -297,6 +297,20 @@ model MediaAsset {
   @@index([workspaceId])
 }
 
+/// A follow-up voice note already delivered to a person. The same audio goes
+/// out once per person per Instagram account, even when they ask for several
+/// resources: only the first campaign that reaches them sends it.
+model FollowUpAudioDelivery {
+  id                  String   @id @default(cuid())
+  instagramBusinessId String
+  userId              String
+  audioUrl            String
+  automationId        String?
+  createdAt           DateTime @default(now())
+
+  @@unique([instagramBusinessId, userId, audioUrl])
+}
+
 /// Last time a person wrote to an Instagram account by DM. Used to stop a
 /// follow-up sequence as soon as the recipient replies.
 model ConversationActivity {

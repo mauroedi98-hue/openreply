@@ -1539,20 +1539,38 @@ async function processFollowUpStep(
     recipientToken,
   });
 
-  // Voice note first, then the text. A failed audio is logged and the text
-  // still goes out, so the person always gets the step's message.
+  // Voice note first, then the text. The same audio goes out once per person
+  // (the first campaign that reaches them claims it), and a failed audio is
+  // logged while the text still goes out.
   if (step.audioUrl) {
-    try {
-      await sendDirectAudioMessage({
-        context: accessToken,
-        instagramAccountId: automation.instagramAccount.instagramId,
-        userId,
-        audioUrl: step.audioUrl,
-      });
-    } catch (error) {
+    const audioClaim = {
+      instagramBusinessId: instagramAccountId,
+      userId,
+      audioUrl: step.audioUrl,
+    };
+    if (await claimFollowUpAudio({ ...audioClaim, automationId })) {
+      try {
+        await sendDirectAudioMessage({
+          context: accessToken,
+          instagramAccountId: automation.instagramAccount.instagramId,
+          userId,
+          audioUrl: step.audioUrl,
+        });
+      } catch (error) {
+        console.log(
+          "[DM Worker] Failed to send follow-up audio:",
+          formatError(error)
+        );
+        // Not delivered: let a later step or campaign send it.
+        await prisma.followUpAudioDelivery
+          .delete({
+            where: { instagramBusinessId_userId_audioUrl: audioClaim },
+          })
+          .catch(() => {});
+      }
+    } else {
       console.log(
-        "[DM Worker] Failed to send follow-up audio:",
-        formatError(error)
+        `[DM Worker] Follow-up step ${step.id}: audio already sent to this person`
       );
     }
   }
@@ -1590,6 +1608,44 @@ async function processFollowUpStep(
       "[DM Worker] Failed to send follow-up step:",
       formatError(error)
     );
+  }
+}
+
+/**
+ * Claim a follow-up voice note for one person. Returns false when that audio
+ * already went to them from any campaign of the account. The unique row makes
+ * two campaigns firing at once still send it a single time. A storage error
+ * other than the duplicate is logged and the audio is sent (old behaviour).
+ */
+async function claimFollowUpAudio({
+  instagramBusinessId,
+  userId,
+  audioUrl,
+  automationId,
+}: {
+  instagramBusinessId: string;
+  userId: string;
+  audioUrl: string;
+  automationId: string;
+}): Promise<boolean> {
+  try {
+    await prisma.followUpAudioDelivery.create({
+      data: { instagramBusinessId, userId, audioUrl, automationId },
+    });
+    return true;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    )
+      return false;
+    console.log(
+      "[DM Worker] Could not record follow-up audio delivery:",
+      formatError(error)
+    );
+    return true;
   }
 }
 
